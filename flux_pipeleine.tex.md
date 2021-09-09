@@ -1,0 +1,610 @@
+
+
+This is the entire FLUX fieldtrip pipeline in livescript format with all of the sections on the wiki. 
+
+
+# Exploring the data file
+
+```matlab:Code
+%dataPath = '/Users/olejen/Dropbox/FLUX/Standard_Pipeline/RawData/Raw/';
+%cfg.dataset  = [dataPath 'training1.fif'];
+cfg.dataset  = ['training1.fif'];
+hdr  = ft_read_header(cfg.dataset);
+
+hdr.label(15:17)
+
+plot3(hdr.grad.chanpos(:,1),hdr.grad.chanpos(:,2),hdr.grad.chanpos(:,3),'*')
+
+hdr.label{340}
+
+%
+
+%dataPath = '/Users/olejen/Dropbox/FLUX/Standard_Pipeline/RawData/Raw/';
+%cfg.dataset                 = [dataPath 'training1.fif'];
+data_exp = ft_read_data(cfg.dataset);
+
+size(data_exp)
+
+plot((1:length(data_exp))/1000,data_exp(16,:),'b')
+hold on
+plot((1:length(data_exp))/1000,data_exp(17,:),'color',[0 0.5 0])
+plot((1:length(data_exp))/1000,data_exp(15,:),'r')
+hold off 
+legend('grad1','grad2','mag')
+xlabel('time (s)')
+xlim([13 15])
+
+plot((1:length(data_exp))/1000,data_exp(340,:))
+xlabel('time (s)')
+xlim([100 160])
+ylim([0 60])
+```
+
+# Reading in trials
+
+```matlab:Code
+cfg                                    = [];
+cfg.dataset                      = 'training1.fif';
+cfg.trialdef.eventtype     = 'STI101';  
+cfg.trialdef.eventvalue    = [21 22];    
+cfg.trialdef.prestim         = 2.5; 
+cfg.trialdef.poststim       = 2; 
+cfg                                   = ft_definetrial(cfg);
+data_all                            = ft_preprocessing(cfg);
+```
+
+# Artifact rejection
+
+```matlab:Code
+dataset{1,1}='training1.fif';
+dataset{1,2}='training2.fif';
+
+for i=1:2
+
+cfg  = [];
+cfg.dataset = char(dataset{1,i});  
+cfg.trialfun = 'ft_trialfun_general';  
+cfg.trialdef.eventtype  = 'STI101';  
+cfg.trialdef.eventvalue = [21 22];  
+cfg.trialdef.prestim = 2.5;  
+cfg.trialdef.poststim = 2;  
+cfg  = ft_definetrial(cfg);   
+cfg.channel = {'MEGGRAD'};  
+cfg.demean = 'yes';    
+data(i,1)  = ft_preprocessing(cfg); 
+end
+
+cfg = [];
+cfg.keepsampleinfo = 'no';
+data_planar = ft_appenddata(cfg,data(1,1),data(2,1));
+
+cfg = [];
+cfg.viewmode='vertical';
+cfg.continuous='no';
+ft_databrowser(cfg, data_planar);
+
+data_planar.trialinfo(1:end,2)=1:length(data_planar.trialinfo);  
+
+cfg=[];
+cfg.method  = 'summary';
+cfg.layout  = 'neuromag306planar.lay';
+planar_rjv1  = ft_rejectvisual(cfg, data_planar);
+
+trl_keep=planar_rjv1.trialinfo(1:end,2);
+planar_rjv1.trialinfo(:,2)=[];
+chan_rej=setdiff(data_planar.label,planar_rjv1.label);
+chan_keep=data_planar.label;
+chan_keep(find(ismember(data_planar.label(:,1), chan_rej(:,1))))= [];
+
+save('chan_keep.mat', 'chan_keep')
+save('trl_keep.mat', 'trl_keep')
+```
+
+# Artifact suppression by ICA
+
+```matlab:Code
+dataset{1,1}='training1.fif';
+dataset{1,2}='training2.fif';
+
+for i=1:2
+
+cfg  = [];
+cfg.dataset = char(dataset{1,i});  
+cfg.trialfun = 'ft_trialfun_general';  
+cfg.trialdef.eventtype  = 'STI101';  
+cfg.trialdef.eventvalue = [21 22];  
+cfg.trialdef.prestim = 2.5;  
+cfg.trialdef.poststim = 2;  
+cfg  = ft_definetrial(cfg);   
+cfg.channel = {'MEGGRAD'};  
+cfg.demean = 'yes';    
+data(i,1)  = ft_preprocessing(cfg); 
+end
+
+cfg=[];
+cfg.keepsampleinfo='no';
+data_planar=ft_appenddata(cfg,data(1,1),data(2,1));
+
+load trl_keep
+load chan_keep
+cfg=[];
+cfg.trials=trl_keep;
+cfg.channel=chan_keep;
+planar_rjv1=ft_selectdata(cfg,data_planar);
+
+cfg=[]; 
+cfg.resamplefs = 300;   
+planar_resamp = ft_resampledata(cfg, planar_rjv1);
+
+cfg        = [];  
+cfg.method = 'runica';  
+cfg.runica.maxsteps = 100;  
+planar_comp = ft_componentanalysis(cfg,planar_resamp);   
+
+cfg = [];
+cfg.channel = [1:10]; 
+cfg.continuous='no';
+cfg.viewmode = 'component'; 
+cfg.layout = 'neuromag306planar.lay';
+ft_databrowser(cfg, planar_comp);
+
+cfg = [];  
+cfg.component = [8 12];  
+planar_ica_resamp = ft_rejectcomponent(cfg, planar_comp, planar_resamp);
+
+cfg = [];  
+cfg.component = [8 12];  
+planar_ica = ft_rejectcomponent(cfg, planar_comp, planar_rjv1);
+
+save('planar_comp.mat', 'planar_comp')
+```
+
+# Event-related fields
+
+```matlab:Code
+dataset{1,1}='training1.fif';
+dataset{1,2}='training2.fif';
+
+for i=1:2
+
+cfg  = [];
+cfg.dataset = char(dataset{1,i});  
+cfg.trialfun = 'ft_trialfun_general';  
+cfg.trialdef.eventtype  = 'STI101';  
+cfg.trialdef.eventvalue = [21 22];  
+cfg.trialdef.prestim = 2.5;  
+cfg.trialdef.poststim = 2;  
+cfg  = ft_definetrial(cfg);   
+cfg.channel = {'MEGGRAD'};  
+cfg.demean = 'yes';    
+data(i,1)  = ft_preprocessing(cfg); 
+end
+
+cfg=[];
+cfg.keepsampleinfo='no';
+data_planar=ft_appenddata(cfg,data(1,1),data(2,1));
+
+load trl_keep
+load chan_keep
+cfg=[];
+cfg.trials=trl_keep;
+cfg.channel=chan_keep;
+planar_rjv1=ft_selectdata(cfg,data_planar);
+
+load planar_comp
+cfg = [];  
+cfg.component = [8 11]; 
+planar_ica = ft_rejectcomponent(cfg, planar_comp, planar_rjv1);
+
+cfg = [];
+cfg.lpfilter = 'yes';
+cfg.lpfreq = 30;      
+cfg.padding   = 8;          
+cfg.padtype  = 'zero';   
+cfg.demean  = 'yes';    
+cfg.detrend = 'no'; 
+cfg.baselinewindow  = [-0.2 0];
+planar_ica_filt = ft_preprocessing(cfg, planar_ica);
+
+idx=(find(planar_ica_filt.trialinfo==21))';
+cfg=[];
+cfg.trials=idx;
+data_left=ft_selectdata(cfg,planar_ica_filt);
+clear idx
+
+idx=(find(planar_ica_filt.trialinfo==22))';
+cfg=[];
+cfg.trials=idx;
+data_right=ft_selectdata(cfg,planar_ica_filt);
+
+cfg = [];
+data_erf_left = ft_timelockanalysis(cfg, data_left);
+data_erf_right = ft_timelockanalysis(cfg, data_right);
+
+cfg = [];
+cfg.method = 'sum';  
+data_erf_comb_left = ft_combineplanar(cfg,data_erf_left);
+data_erf_comb_right = ft_combineplanar(cfg,data_erf_right);
+
+cfg = [];
+cfg.layout       = 'neuromag306cmb.lay';
+cfg.baseline = [-0.2 0]; 
+cfg.xlim = [-0.2 0.5]; 
+cfg.ylim = [-3e-12 2e-11]; 
+ft_multiplotER(cfg, data_erf_comb_left,data_erf_comb_right);
+
+cfg = [];
+cfg.layout       = 'neuromag306cmb.lay';
+cfg.baseline = [-0.2 0];  
+cfg.xlim = [0.15 0.25]; 
+cfg.zlim = [-3e-12 3e-12];
+ft_topoplotER(cfg, data_erf_comb_left);
+
+cfg=[];
+cfg.parameter = 'avg';
+cfg.operation = 'x1-x2';
+data_erf_diff=ft_math(cfg,data_erf_comb_left,data_erf_comb_right);
+
+cfg = [];
+cfg.layout       = 'neuromag306cmb.lay';
+cfg.baseline = [-0.2 0]; 
+cfg.xlim = [-0.2 0.5]; 
+cfg.ylim = [-3e-12 2e-11]; 
+ft_multiplotER(cfg, data_erf_diff);
+```
+
+# TFR
+
+```matlab:Code
+dataset{1,1} = 'training1.fif';
+dataset{1,2} = 'training2.fif';
+
+for i=1:2
+   cfg = [];
+   cfg.dataset = char(dataset{1,i});  
+   cfg.trialfun = 'ft_trialfun_general';  
+   cfg.trialdef.eventtype  = 'STI101';  
+   cfg.trialdef.eventvalue = [21 22];  
+   cfg.trialdef.prestim = 2.5;  
+   cfg.trialdef.poststim = 2;  
+   cfg  = ft_definetrial(cfg);    
+   cfg.channel = {'MEGGRAD'};  
+   cfg.demean = 'yes';    
+   data(i,1)  = ft_preprocessing(cfg); 
+end
+
+cfg=[];
+cfg.keepsampleinfo='no';
+data_planar=ft_appenddata(cfg,data(1,1),data(2,1));
+
+load trl_keep
+load chan_keep
+cfg=[];
+cfg.trials=trl_keep;
+cfg.channel=chan_keep;
+planar_rjv1=ft_selectdata(cfg,data_planar);
+
+load planar_comp
+cfg = [];  
+cfg.component = [8 11]; 
+planar_ica = ft_rejectcomponent(cfg, planar_comp, planar_rjv1);
+
+idx=(find(planar_ica.trialinfo==21))';
+cfg=[];
+cfg.trials=idx;
+data_left=ft_selectdata(cfg,planar_ica);
+clear idx
+
+idx=(find(planar_ica.trialinfo==22))';
+cfg=[];
+cfg.trials=idx;
+data_right=ft_selectdata(cfg,planar_ica);
+
+cfg = [];
+cfg.output = 'pow';
+cfg.channel = 'MEGGRAD';
+cfg.taper = 'hanning';
+cfg.method = 'mtmconvol';
+cfg.foi          = 2:2:30;
+numfoi = length(cfg.foi);
+cfg.t_ftimwin    =  ones(length(cfg.foi),1).* 0.5;
+cfg.toi          = [-1.8 : 0.05: 1];
+cfg.keeptrials = 'no'; 
+tfr_low_left = ft_freqanalysis(cfg, data_left);
+tfr_low_right = ft_freqanalysis(cfg, data_right);
+
+cfg = [];
+cfg.method = 'sum';
+tfr_low_left_c = ft_combineplanar(cfg,tfr_low_left);
+tfr_low_right_c = ft_combineplanar(cfg,tfr_low_right);
+
+cfg = [];
+cfg.baseline     = 'no'; 
+cfg.xlim         = [-0.5 1];
+cfg.zlim         = [0 0.7e-23] ;	        
+cfg.showlabels   = 'no';	
+cfg.channel = 'MEG2112+2113';
+ft_singleplotTFR(cfg, tfr_low_left_c);
+
+cfg = [];
+cfg.baseline     = [-0.5 -0.3]; 
+cfg.baselinetype = 'relative';
+cfg.xlim         = [-0.5 1];
+cfg.zlim         = [0.4 2] ;	        
+cfg.showlabels   = 'no';	
+cfg.channel = 'MEG2112+2113';
+ft_singleplotTFR(cfg, tfr_low_left_c);
+
+cfg = [];
+cfg.baseline     = [-0.5 -0.3]; 
+cfg.baselinetype = 'relative';
+cfg.xlim=[-0.5 1];
+cfg.zlim         = [0.4 2] ;	        
+cfg.layout = 'neuromag306cmb.lay';
+ft_multiplotTFR(cfg, tfr_low_left_c);
+
+cfg = [];
+cfg.baseline     = [-0.5 -0.3]; 
+cfg.baselinetype = 'relative';
+cfg.xlim=[0.35 1];
+cfg.ylim = [10 10];
+cfg.zlim         = [0.5 1.5] ;	        
+cfg.showlabels   = 'no';	
+cfg.layout = 'neuromag306cmb.lay';
+figure 
+ft_topoplotTFR(cfg, tfr_low_left_c);
+
+tfr_low_diff=tfr_low_left_c;
+tfr_low_diff.powspctrm=(tfr_low_left_c.powspctrm-tfr_low_right_c.powspctrm)./(tfr_low_left_c.powspctrm+tfr_low_right_c.powspctrm);
+
+cfg = [];
+cfg.xlim=[-1 1];
+cfg.zlim         = [-0.3 0.3] ;	        
+cfg.showlabels   = 'no';	
+cfg.layout       = 'neuromag306cmb.lay';
+ft_multiplotTFR(cfg, tfr_low_diff);
+
+cfg = [];
+cfg.xlim = [-0.5 0];
+cfg.ylim = [10 10];
+cfg.zlim         = [-0.2 0.2] ;	        
+cfg.showlabels   = 'no';	
+cfg.layout       = 'neuromag306cmb.lay';
+ft_topoplotTFR(cfg, tfr_low_diff);
+
+cfg = [];
+cfg.xlim = [-0.6:0.2:0.6];
+cfg.ylim = [10 10];
+cfg.zlim         = [-0.2 0.2] ;	        
+cfg.showlabels   = 'no';	
+cfg.layout       = 'neuromag306cmb.lay';
+ft_topoplotTFR(cfg, tfr_low_diff);
+
+cfg = [];
+cfg.output = 'pow';
+cfg.channel = 'MEGGRAD';
+cfg.taper = 'dpss';
+cfg.tapsmofrq  = 10; 
+cfg.method = 'mtmconvol';
+cfg.foi          = 30:4:100;
+numfoi = length(cfg.foi);
+cfg.t_ftimwin    =  ones(length(cfg.foi),1).* 0.25;
+cfg.toi          = [-1.8 : 0.05: 1];
+cfg.keeptrials = 'no'; 
+tfr_high_left = ft_freqanalysis(cfg, data_left);
+tfr_high_right = ft_freqanalysis(cfg, data_right);
+
+cfg = [];
+cfg.method = 'sum';
+tfr_high_left_c = ft_combineplanar(cfg,tfr_high_left);
+tfr_high_right_c = ft_combineplanar(cfg,tfr_high_right);
+
+cfg = [];
+cfg.baseline     = [-0.5 -0.3]; 
+cfg.baselinetype = 'relative';
+cfg.xlim=[-0.5 1];
+cfg.zlim         = [0.5 1.5] ;	        
+cfg.showlabels   = 'no';	 
+cfg.layout       = 'neuromag306cmb.lay';
+ft_multiplotTFR(cfg, tfr_high_left_c);
+
+cfg = [];
+cfg.baseline     = [-0.5 -0.3]; 
+cfg.baselinetype = 'relative';
+cfg.xlim=[-0.5 1];
+cfg.zlim         = [0.6  1.4] ;	        
+cfg.showlabels   = 'no';	
+cfg.channel = 'MEG1922+1923'; 
+ft_singleplotTFR(cfg, tfr_high_left_c);
+
+cfg = [];
+cfg.output = 'pow';
+cfg.channel = 'MEGGRAD';
+cfg.taper = 'hanning';
+cfg.method = 'mtmconvol';
+cfg.foi          = 30:4:100;
+cfg.t_ftimwin    =  ones(length(cfg.foi),1).* 0.25;
+cfg.toi          = [-1.8 : 0.05: 1];
+cfg.keeptrials = 'no'; 
+tfr_han_left = ft_freqanalysis(cfg, data_left);
+
+cfg = [];
+cfg.method = 'sum';
+tfr_han_left_c = ft_combineplanar(cfg,tfr_han_left);
+
+cfg = [];
+cfg.baseline     = [-0.5 -0.3]; 
+cfg.baselinetype = 'relative';
+cfg.xlim=[-0.5 1];
+cfg.zlim         = [0.6  1.4] ;	        
+cfg.showlabels   = 'no';	
+cfg.channel = 'MEG1922+1923'; 
+ft_singleplotTFR(cfg, tfr_han_left_c);
+```
+
+# Source analysis
+
+```matlab:Code
+megfile='E:\Standard_Pipeline\Current version\training1.fif';
+mrifile='E:\Standard_Pipeline\Current version\20190228_0910_dicom\T1_biobank_normal_5\00001.dcm';
+
+mri = ft_read_mri(mrifile);
+
+mri_reslice=ft_volumereslice([],mri);
+
+headshape=ft_read_headshape(megfile);
+
+grad=ft_read_sens(megfile,'senstype','meg');
+
+figure;
+ft_plot_headshape(headshape);
+ft_plot_sens(grad);
+
+cfg=[];
+cfg.viewresult='yes';
+cfg.method='interactive';
+cfg.coordsys='neuromag';
+mri_realigned1=ft_volumerealign(cfg,mri_reslice);
+
+headshape=ft_convert_units(headshape,'cm');
+mri_realigned1=ft_convert_units(mri_realigned1,'cm');
+
+nas = ft_warp_apply(mri_realigned1.transform, [mri_realigned1.cfg.fiducial.nas]);%, mri_realigned1.cfg.fiducial.lpa, mri_realigned1.cfg.fiducial.rpa, 'neuromag')
+lpa = ft_warp_apply(mri_realigned1.transform, [mri_realigned1.cfg.fiducial.lpa]);%, mri_realigned1.cfg.fiducial.lpa, mri_realigned1.cfg.fiducial.rpa, 'neuromag')
+rpa = ft_warp_apply(mri_realigned1.transform, [mri_realigned1.cfg.fiducial.rpa]);%, mri_realigned1.cfg.fiducial.lpa, mri_realigned1.cfg.fiducial.rpa, 'neuromag')
+
+ft_determine_coordsys(mri_realigned1,'interactive','no')
+hold on;
+ft_plot_headshape(headshape);
+plot3(nas(1,1), nas(1,2), nas(1,3), 'm*');
+plot3(lpa(1,1), lpa(1,2), lpa(1,3), 'm*');
+plot3(rpa(1,1), rpa(1,2), rpa(1,3), 'm*');
+
+cfg=[];
+cfg.method='headshape';
+cfg.headshape.headshape=headshape;
+cfg.headshape.icp='yes';
+cfg.coordsys='neuromag';
+mri_realigned2 =ft_volumerealign(cfg,mri_realigned1);
+
+%Forward model
+
+cfg=[];
+cfg.output = {'brain'};
+mri_segm=ft_volumesegment(cfg,mri_realigned2);
+
+cfg = [];
+cfg.funparameter = 'brain';
+ft_sourceplot(cfg, mri_segm);
+
+cfg=[];
+cfg.grad=grad;
+cfg.method='singleshell';
+headmodel=ft_prepare_headmodel(cfg,mri_segm);
+
+ft_plot_sens(grad);
+ft_plot_headshape(headshape);
+ft_plot_headmodel(headmodel);
+ft_plot_axes([]);
+
+cfg=[];
+cfg.grad=grad;
+cfg.headmodel=headmodel;
+cfg.senstype='meg';
+cfg.grid.resolution=0.5;
+cfg.grid.unit='cm';
+cfg.normalize='yes';
+cfg.channel=planar_ica.label;
+grid=ft_prepare_leadfield(cfg);
+
+figure;
+ft_plot_sens(grad, 'style', '*b');
+ft_plot_headmodel(headmodel, 'edgecolor', 'none'); alpha 0.4;
+ft_plot_mesh(grid.pos(grid.inside,:));
+
+planar_ica.grad=grad;
+idx=(find(planar_ica.trialinfo==21))';
+cfg=[];
+cfg.trials=idx;
+data_left=ft_selectdata(cfg,planar_ica);
+clear idx
+
+idx=(find(planar_ica.trialinfo==22))';
+cfg=[];
+cfg.trials=idx;
+data_right=ft_selectdata(cfg,planar_ica);
+
+cfg=[];
+cfg.latency=[-0.5 0];
+data_left_sh=ft_selectdata(cfg,data_left);
+cfg.latency=[-0.5 0];
+data_right_sh=ft_selectdata(cfg,data_right);
+
+data_sh_cmb=ft_appenddata([], data_left_sh,data_right_sh);
+
+cfg = [];
+cfg.output = 'powandcsd';
+cfg.method='mtmfft';
+cfg.taper = 'hanning';
+cfg.foi          = 10;
+cfg.keeptrials='yes';
+freq_left_sh=ft_freqanalysis(cfg, data_left_sh);
+freq_right_sh=ft_freqanalysis(cfg, data_right_sh);
+freq_sh_cmb=ft_freqanalysis(cfg,data_sh_cmb);
+
+cfg=[];
+cfg.method='dics';
+cfg.grad=grad;
+cfg.frequency=freq_sh_cmb.freq;
+cfg.sourcemodel=grid;
+cfg.headmodel=headmodel;
+cfg.dics.projectnoise='yes';
+cfg.dics.lambda       = '5%';
+cfg.dics.keepfilter   = 'yes';
+cfg.dics.realfilter   = 'yes';
+source_cmb=ft_sourceanalysis(cfg,freq_sh_cmb);
+cfg.sourcemodel.filter=source_cmb.avg.filter;
+source_left=ft_sourceanalysis(cfg,freq_left_sh);
+source_right=ft_sourceanalysis(cfg,freq_right_sh);
+
+source_con_pos1=source_left;
+source_con_pos1.avg.pow=(source_left.avg.pow-source_right.avg.pow)./(source_left.avg.pow+source_right.avg.pow);
+source_con_pos2=source_left;
+source_con_pos2.avg.pow=(source_right.avg.pow-source_left.avg.pow)./(source_left.avg.pow+source_right.avg.pow);
+
+cfg=[];
+cfg.parameter='avg.pow';
+cfg.interpmethod  ='nearest';
+source_conint_pos1=ft_sourceinterpolate(cfg,source_con_pos1,mri_realigned2);
+source_conint_pos2=ft_sourceinterpolate(cfg,source_con_pos2,mri_realigned2);
+
+cfg=[];
+cfg.method='ortho';
+cfg.funparameter='pow';
+cfg.maskparameter=cfg.funparameter;
+cfg.funcolorlim=[0 0.3];
+cfg.opacitylim=[0 0.3];
+cfg.opacitymap='rampup';
+ft_sourceplot(cfg,source_conint_pos1);
+
+cfg = [];
+cfg.nonlinear = 'no';
+source_conint_pos1_norm = ft_volumenormalise(cfg, source_conint_pos1);
+source_conint_pos2_norm = ft_volumenormalise(cfg, source_conint_pos2);
+
+cfg = [];
+cfg.method         = 'surface';
+cfg.funparameter   = 'pow';
+cfg.maskparameter  = cfg.funparameter;
+cfg.funcolorlim    = [0.1 0.2];
+cfg.funcolormap    = 'jet';
+cfg.opacitylim     = [0.1 0.2];
+cfg.opacitymap     = 'rampup';
+cfg.projmethod     = 'nearest';
+cfg.surffile       = 'surface_white_both.mat'; 
+cfg.surfdownsample = 10;  
+ft_sourceplot(cfg, source_conint_pos1_norm);
+view ([0 0])          
+camlight('headlight');
+```
+
